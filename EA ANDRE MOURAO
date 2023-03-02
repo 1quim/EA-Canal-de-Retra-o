@@ -1,0 +1,435 @@
+// Definir as bibliotecas necessárias
+#include <stdlib.mqh>
+
+// Definir as variáveis globais
+input int periodo_canal = 100; // Período do canal de regressão linear
+input double desvio_2 = 2; // Desvio padrão para o canal 2
+input double desvio_3 = 3; // Desvio padrão para o canal 3
+input double desvio_4 = 4; // Desvio padrão para o canal 4 (faltava essa definição)
+input double lote = 0.1; // Tamanho do lote para as operações
+input int slippage = 3; // Slippage para as ordens
+input int magic = 123; // Número mágico para as ordens
+input double stop_loss = 100; // Stop Loss para as ordens
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+double iLRMA(string symbol, int timeframe, int period, double deviation, int price, int shift_ma = 0)
+  {
+   double MA = iMA(symbol, timeframe, period, shift_ma, MODE_SMA, price);
+   double STD = iStdDev(symbol, timeframe, period, shift_ma, price, MODE_SMA, 0); // fixado o parâmetro "shift" na função iStdDev
+   return MA + deviation * STD;
+  }
+
+// Definir os canais de regressão linear
+int handle_canal_2, handle_canal_3, handle_canal_4; // adicionado handle_canal_4
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void inicializarCanais()
+  {
+   handle_canal_2 = iLRMA(NULL, 0, periodo_canal, desvio_2, PRICE_CLOSE, 0);
+   handle_canal_3 = iLRMA(NULL, 0, periodo_canal, desvio_3, PRICE_CLOSE, 0);
+   handle_canal_4 = iLRMA(NULL, 0, periodo_canal, desvio_4, PRICE_CLOSE, 0); // adicionado handle_canal_4
+// Plotar canal 2
+   ObjectCreate("canal_2", OBJ_REGRESSION, 0, 0, 0, 0);
+   ObjectSet("canal_2", OBJPROP_PERIOD, periodo_canal);
+   ObjectSet("canal_2", OBJPROP_DEVIATION, desvio_2);
+   ObjectSet("canal_2", OBJPROP_COLOR, Red);
+// Plotar canal 3
+   ObjectCreate("canal_3", OBJ_REGRESSION, 0, 0, 0, 0);
+   ObjectSet("canal_3", OBJPROP_PERIOD, periodo_canal);
+   ObjectSet("canal_3", OBJPROP_DEVIATION, desvio_3);
+   ObjectSet("canal_3", OBJPROP_COLOR, Green);
+// Plotar canal 4
+   ObjectCreate("canal_4", OBJ_REGRESSION, 0, 0, 0, 0);
+   ObjectSet("canal_4", OBJPROP_PERIOD, periodo_canal);
+   ObjectSet("canal_4", OBJPROP_DEVIATION, desvio_4);
+   ObjectSet("canal_4", OBJPROP_COLOR, Blue);
+  }
+
+// Função para gerar sinais de compra e venda
+void GerarSinais(double preco_atual, double canal_superior, double canal_inferior, double &sinal_compra, double &sinal_venda)
+  {
+// Verificar se o preço atual está acima do canal superior (canal 4)
+   if(preco_atual > canal_superior)
+     {
+      sinal_venda = 1;
+     }
+// Verificar se o preço atual está abaixo do canal inferior (canal 3)
+   else
+      if(preco_atual < canal_inferior)
+        {
+         sinal_compra = 1;
+        }
+      else
+        {
+         sinal_compra = 0;
+         sinal_venda = 0;
+        }
+  }
+
+// Função para fechar todas as ordens em aberto
+void FecharOrdens()
+  {
+   int total_ordens = OrdersTotal();
+   for(int i = total_ordens - 1; i >= 0; i--)
+     {
+      if(OrderSelect(i, SELECT_BY_POS))
+        {
+         if(OrderSymbol() == Symbol() && OrderMagicNumber() == magic)
+           {
+            OrderClose(OrderTicket(), OrderLots(), Bid, slippage);
+           }
+        }
+     }
+  }
+
+// Função principal do EA
+void OnTick()
+  {
+// Verificar se o EA está ativado
+   if(!IsExpertEnabled())
+     {
+      return;
+     }
+// Verificar se todas as variáveis foram definidas corretamente
+   if(handle_canal_2 == 0 || handle_canal_3 == 0 || handle_canal_4 == 0)
+     {
+      Print("Erro: as variáveis dos canais não foram definidas corretamente!");
+      return;
+     }
+// Obter os preços de fechamento dos últimos 2 candles
+   double close_price_0 = Close[0];
+   double close_price_1 = Close[1];
+// Verificar se o preço atual é maior que o preço do candle anterior
+   if(close_price_0 > close_price_1)
+     {
+      double canal_superior = iLRMA(NULL, 0, periodo_canal, desvio_4, PRICE_CLOSE, 1);
+      double canal_inferior = iLRMA(NULL, 0, periodo_canal, desvio_3, PRICE_CLOSE, 1);
+      double sinal_compra = 0;
+      double sinal_venda = 0;
+   }
+   GerarSinais(close_price_0, canal_superior, canal_inferior, sinal_compra, sinal_venda);
+// Fechar todas as ordens em aberto
+   FecharOrdens();
+
+// Verificar o sinal de compra e enviar a ordem
+   if(sinal_compra == 1)
+     {
+      int ticket = OrderSend(Symbol(), OP_BUY, lote, Ask, slippage, Ask - stop_loss * Point, 0, "Meu EA", magic, 0, Blue);
+      if(ticket > 0)
+        {
+         Print("Ordem de COMPRA enviada com sucesso! Ticket: ", ticket);
+        }
+      else
+        {
+         Print("Erro ao enviar ordem de COMPRA! Código do erro: ", GetLastError());
+        }
+     }
+// Verificar o sinal de venda e enviar a ordem
+   else
+      if(sinal_venda == 1)
+        {
+         int ticket = OrderSend(Symbol(), OP_SELL, lote, Bid, slippage, Bid + stop_loss * Point, 0, "Meu EA", magic, 0, Red);
+         if(ticket > 0)
+           {
+            Print("Ordem de VENDA enviada com sucesso! Ticket: ", ticket);
+           }
+         else
+           {
+            void GerarSinais(double preco_atual, double canal_superior, double canal_inferior, double &sinal_compra, double &sinal_venda)
+              {
+               // Verificar se o preço atual cruza para cima o canal superior
+               if(preco_atual > canal_superior)
+                 {
+                  sinal_compra = preco_atual;
+                 }
+               // Verificar se o preço atual cruza para baixo o canal inferior
+               if(preco_atual < canal_inferior)
+                 {
+                  sinal_venda = preco_atual;
+                 }
+              }
+           }
+         void OnTick()
+           {
+            // Obter o preço atual do instrumento
+            double preco_atual = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            // Calcular os níveis do canal de regressão linear
+            double canal_2_superior = iLRMA(NULL, 0, periodo_canal, desvio_2, PRICE_CLOSE, 0);
+            double canal_2_inferior = iLRMA(NULL, 0, periodo_canal, -desvio_2, PRICE_CLOSE, 0);
+            double canal_3_superior = iLRMA(NULL, 0, periodo_canal, desvio_3, PRICE_CLOSE, 0);
+            double canal_3_inferior = iLRMA(NULL, 0, periodo_canal, -desvio_3, PRICE_CLOSE, 0);
+            double canal_4_superior = iLRMA(NULL, 0, periodo_canal, desvio_4, PRICE_CLOSE, 0);
+            double canal_4_inferior = iLRMA(NULL, 0, periodo_canal, -desvio_4, PRICE_CLOSE, 0);
+            // Gerar os sinais de compra e venda
+            double sinal_compra = 0, sinal_venda = 0;
+            GerarSinais(preco_atual, canal_2_superior, canal_2_inferior, sinal_compra, sinal_venda);
+            GerarSinais(preco_atual, canal_3_superior, canal_3_inferior, sinal_compra, sinal_venda);
+            GerarSinais(preco_atual, canal_4_superior, canal_4_inferior, sinal_compra, sinal_venda);
+            // Verificar se há um sinal de compra
+            if(sinal_compra > 0)
+              {
+               // Calcular o tamanho da posição em lotes
+               double tamanho_posicao = NormalizeDouble(AccountBalance() * lote / stop_loss, 2);
+               // Abrir uma posição de compra
+               int ticket_compra = OrderSend(_Symbol, OP_BUY, tamanho_posicao, preco_atual, slippage, 0, 0, "Compra", magic, 0, Green);
+               if(ticket_compra > 0)
+                 {
+                  Print("Ordem de compra aberta com sucesso: ", _Symbol, " lotes: ", tamanho_posicao, " preço: ", preco_atual);
+                 }
+               else
+                 {
+                  Print("Erro ao abrir ordem de compra: ", GetLastError());
+                 }
+              }
+            // Verificar se há um sinal de venda
+            if(sinal_venda > 0)
+              {
+               // Calcular o tamanho da posição em lotes
+               double tamanho_posicao = NormalizeDouble(AccountBalance() * lote / stop_loss, 2);
+               // Abrir uma posição de venda
+               int ticket_venda = OrderSend(_Symbol, OP_SELL, tamanho_posicao, Bid, slippage, Bid + stop_loss * Point, Bid - stop_loss * Point, "venda", magic, 0, Blue);
+               if(ticket_venda > 0)  // Verificar se a ordem de venda foi executada com sucesso
+                 {
+                  Print("Ordem de venda aberta com sucesso, ticket: ", ticket_venda);
+                  ObjectCreate("linha_venda_" + IntegerToString(ticket_venda), OBJ_HLINE, 0, 0, Bid, 0);
+                  ObjectSet("linha_venda_" + IntegerToString(ticket_venda), OBJPROP_COLOR, Blue);
+                  ObjectSet("linha_venda_" + IntegerToString(ticket_venda), OBJPROP_STYLE, STYLE_SOLID);
+                  ObjectSet("linha_venda_" + IntegerToString(ticket_venda), OBJPROP_WIDTH, 1);
+                 }
+               else // Caso contrário, mostrar a mensagem de erro
+                 {
+                  Print("Erro ao abrir ordem de venda, código do erro: ", GetLastError());
+                 }
+              }
+
+            // Função para gerenciar as ordens abertas
+            void GerenciarOrdens()
+              {
+               for(int i = OrdersTotal() - 1; i >= 0; i--)
+                 {
+                  if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+                    {
+                     if(OrderSymbol() == Symbol && OrderMagicNumber() == magic)
+                       {
+                        // Se a ordem for de compra e o preço atual estiver abaixo da linha de venda, fechar a ordem
+                        if(OrderType() == OP_BUY && Bid < ObjectGet("linha_venda" + IntegerToString(OrderTicket()), OBJPROP_PRICE1))
+                          {
+                           if(OrderClose(OrderTicket(), OrderLots(), Bid, slippage, Red))
+                             {
+                              Print("Ordem de compra fechada com sucesso, ticket: ", OrderTicket());
+                              ObjectDelete("linha_compra_" + IntegerToString(OrderTicket()));
+                              break;
+                             }
+                           else
+                             {
+                              Print("Erro ao fechar ordem de compra, código do erro: ", GetLastError());
+                             }
+                          }
+                        // Se a ordem for de venda e o preço atual estiver acima da linha de compra, fechar a ordem
+                        else
+                           if(OrderType() == OP_SELL && Ask > ObjectGet("linha_compra_" + IntegerToString(OrderTicket()), OBJPROP_PRICE1))
+                             {
+                              if(OrderClose(OrderTicket(), OrderLots(), Ask, slippage, Red))
+                                {
+                                 Print("Ordem de venda fechada com sucesso, ticket: ", OrderTicket());
+                                 ObjectDelete("linha_venda_" + IntegerToString(OrderTicket()));
+                                 break;
+                                }
+                              else
+                                {
+                                 Print("Erro ao fechar ordem de venda, código do erro: ", GetLastError());
+                                }
+                             }
+                           // Se nenhuma das condições acima for satisfeita, atualizar as linhas de compra e venda
+                           else
+                             {
+                              double preco_atual = OrderType() == OP_BUY ? Bid : Ask;
+                              double linha_compra, linha_venda;
+                              CalculaLinhasDeCompraEVenda(preco_atual, linha_compra, linha_venda);
+                              ObjectMove("linha_compra_" + IntegerToString(OrderTicket()), 0, linha_compra);
+                              ObjectMove("linha_venda_" + IntegerToString(OrderTicket()), 0, linha_venda);
+                             }
+                       }
+                    }
+                 }
+              }
+            Ticket, MODE_TRADES))
+              {
+               if(OrderSymbol() == _Symbol && (OrderType() == OP_BUY || OrderType() == OP_SELL))
+                 {
+                  int ticket_ordem = OrderTicket();
+                  double lotes_ordem = OrderLots();
+                  bool resultado_fechamento = OrderClose(ticket_ordem, lotes_ordem, Bid, slippage);
+                  if(resultado_fechamento)
+                    {
+                     Print("Ordem fechada: ", ticket_ordem);
+                    }
+                  else
+                    {
+                     Print("Erro ao fechar ordem: ", ticket_ordem, " - Erro: ", GetLastError());
+                    }
+                 }
+              }
+           }
+        }
+
+// Função para gerenciar as posições abertas
+   void GerenciarPosicoes()
+     {
+      // Fechar todas as ordens se o canal 4 for rompido
+      if(Crossover(preco_atual, canal_superior_4) || Crossunder(preco_atual, canal_inferior_4))
+        {
+         FecharTodasOrdens();
+        }
+
+      // Verificar se há posições abertas
+      if(OrdersTotal() > 0)
+        {
+         // Verificar se há ordens de compra
+         if(OrderSelect(0, SELECT_BY_POS, MODE_TRADES) && OrderType() == OP_BUY)
+           {
+            // Verificar se o preço ultrapassou o canal 3
+            if(Crossunder(preco_atual, canal_3))
+              {
+               // Fechar a posição de compra
+               int ticket_ordem = OrderTicket();
+               double lotes_ordem = OrderLots();
+               bool resultado_fechamento = OrderClose(ticket_ordem, lotes_ordem, Bid, slippage);
+               if(resultado_fechamento)
+                 {
+                  Print("Ordem fechada: ", ticket_ordem);
+                 }
+               else
+                 {
+                  Print("Erro ao fechar ordem: ", ticket_ordem, " - Erro: ", GetLastError());
+                 }
+              }
+           }
+         // Verificar se há ordens de venda
+         else
+            if(OrderSelect(0, SELECT_BY_POS, MODE_TRADES) && OrderType() == OP_SELL)
+              {
+               // Verificar se o preço ultrapassou o canal 3
+               if(Crossover(preco_atual, canal_3))
+                 {
+                  // Fechar a posição de venda
+                  int ticket_ordem = OrderTicket();
+                  double lotes_ordem = OrderLots();
+                  bool resultado_fechamento = OrderClose(ticket_ordem, lotes_ordem, Ask, slippage);
+                  if(resultado_fechamento)
+                    {
+                     Print("Ordem fechada: ", ticket_ordem);
+                    }
+                  else
+                    {
+                     Print("Erro ao fechar ordem: ", ticket_ordem, " - Erro: ", GetLastError());
+                    }
+                 }
+              }
+        }
+      else
+        {
+         // Verificar se o preço ultrapassou o canal 2
+         if(Crossunder(preco_atual, canal_2))
+           {
+            // Abrir uma posição de venda
+            int ticket_venda = OrderSend(_Symbol, OP_SELL, tamanho_posicao, Bid, slippage, Bid + stop_loss * _Point, Bid - stop_loss * _Point, "Canal 2 rompido - Venda", magic, 0, Blue);
+            if(ticket_venda > 0)
+              {
+               Print("Ordem aberta: ", ticket_venda);
+              }
+            else
+              {
+               Print("Erro ao abrir ordem de venda: ", GetLastError());
+              }
+           }
+         // Verificar se o preço ultrapassou o canal 3
+         else
+            if(Crossover(preco_atual, canal_3))
+              {
+               // Abrir uma posição de compra
+               int ticket_compra = OrderSend(_Symbol, OP_BUY, tamanho_posicao, Ask, slippage, Ask - stop_loss * _Point, Ask + stop_loss * _Point, "Canal 4 - Compra", magic, 0, Blue);
+               if(ticket_compra > 0)  // Verificar se a ordem foi aberta com sucesso
+                 {
+                  Print("Ordem de COMPRA aberta com sucesso! Ticket: ", ticket_compra);
+                 }
+               else
+                 {
+                  Print("Erro ao abrir ordem de COMPRA! Código do erro: ", GetLastError());
+                 }
+              }
+
+         // Função para fechar todas as ordens abertas
+         void FecharTodasOrdens()
+           {
+            for(int i = OrdersTotal() - 1; i >= 0; i--)
+              {
+               if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+                 {
+                  if(OrderClose(OrderTicket(), OrderLots(), Bid, slippage, Red))
+                    {
+                     Print("Ordem fechada com sucesso! Ticket: ", OrderTicket());
+                    }
+                  else
+                    {
+                     Print("Erro ao fechar ordem! Código do erro: ", GetLastError());
+                    }
+                 }
+              }
+           }
+
+         // Função para gerenciar as operações
+         void GerenciarOperacoes()
+           {
+            // Verificar se há ordens abertas
+            if(OrdersTotal() == 0)
+              {
+               // Verificar se há sinal de compra
+               if(sinal_compra == 1)
+                 {
+                  // Calcular o tamanho da posição em lotes
+                  double tamanho_posicao = NormalizeDouble(AccountBalance() * lote / stop_loss, 2);
+                  // Abrir uma posição de compra
+                  int ticket_compra = OrderSend(_Symbol, OP_BUY, tamanho_posicao, Ask, slippage, Ask - stop_loss * _Point, Ask + stop_loss * _Point, "Canal 4 - Compra", magic, 0, Blue);
+                  if(ticket_compra > 0)  // Verificar se a ordem foi aberta com sucesso
+                    {
+                     Print("Ordem de COMPRA aberta com sucesso! Ticket: ", ticket_compra);
+                    }
+                  else
+                    {
+                     Print("Erro ao abrir ordem de COMPRA! Código do erro: ", GetLastError());
+                    }
+                 }
+               // Verificar se há sinal de venda
+               else
+                  if(sinal_venda == 1)
+                    {
+                     // Calcular o tamanho da posição em lotes
+                     double tamanho_posicao = NormalizeDouble(AccountBalance() * lote / stop_loss, 2);
+                     // Abrir uma posição de venda
+                     int ticket_venda = OrderSend(_Symbol, OP_SELL, tamanho_posicao, Bid, slippage, Bid + stop_loss * _Point, Bid - stop_loss * _Point, "Canal 4 - Venda", magic, 0, Red);
+                     if(ticket_venda > 0)  // Verificar se a ordem foi aberta com sucesso
+                       {
+                        Print("Ordem de VENDA aberta com sucesso! Ticket: ", ticket_venda);
+                       }
+                     else
+                       {
+                        Print("Erro ao abrir ordem de VENDA! Código do erro: ", GetLastError());
+                       }
+                    }
+              }
+            // Se há ordens abertas, verificar se é necessário fechá-las
+            else
+              {
+               double lucro_total = 0;
+               double preco_atual = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+               for(int i = OrdersTotal())
+                 }
+           }
+         //+------------------------------------------------------------------+
+
+         //+------------------------------------------------------------------+
